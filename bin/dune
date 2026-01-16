@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (public_name menhir-incremental-parser)
+ (libraries menhirLib))
+
+(menhir
+ (modules grammar6)
+ (flags --table))
+
+(ocamllex mini_lexer)
