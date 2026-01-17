@@ -4,7 +4,7 @@
  (libraries menhirLib menhirSdk))
 
 (menhir
- (modules grammar6)
- (flags --table --cmly))
+ (modules grammar6 calc)
+ (flags --table --inspection --cmly))
 
-(ocamllex mini_lexer)
+(ocamllex mini_lexer calc_lexer)

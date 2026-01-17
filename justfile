@@ -1,6 +1,9 @@
-default: build
+default: run
 
 build:
+    dune build
+
+watch:
     dune build @ocaml-index -w
 
 run:
