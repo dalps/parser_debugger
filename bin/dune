@@ -1,7 +1,7 @@
 (executable
  (name frontend)
  (public_name menhir-incremental-parser)
- (libraries menhirLib menhirSdk))
+ (libraries menhirLib menhirSdk ANSITerminal))
 
 (menhir
  (modules grammar6 calc)

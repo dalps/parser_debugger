@@ -1,5 +1,5 @@
 %token <int> INT
-%token PLUS MINUS TIMES DIV
+%token PLUS [@break] MINUS TIMES DIV
 %token LPAREN RPAREN
 %token EOF
 
@@ -27,7 +27,7 @@ expr:
 | e1 = expr TIMES e2 = expr
     { e1 * e2 }
 | e1 = expr DIV e2 = expr
-    { e1 / e2 }
+    { e1 / e2 } [@break]
 | MINUS e = expr %prec UMINUS
     { - e }
 
