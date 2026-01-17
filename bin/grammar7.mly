@@ -3,6 +3,9 @@
 %start <unit> main
 %start <unit> rule_S
 
+%nonassoc prec_B
+%nonassoc Tb
+
 %%
 
 main: rule_S EOF {}
@@ -11,5 +14,5 @@ rule_S:
   "a" rule_A "c" {}
 
 rule_A:
-  | rule_A "b" "b" {}
-  | "b" {}
+  | "b" rule_A "b" {}
+  | "b" {} %prec prec_B
