@@ -47,14 +47,16 @@ let string_of_item (prod : I.production) (bullet : int) : string * string list =
   in
   (lhs, List.take bullet rhs @ [ "." ] @ List.drop bullet rhs)
 
-let string_of_production (prod : I.production) : string =
-  let prod = prod |> I.production_index |> CMLY.Production.of_int in
+let string_of_cmly_prod (prod : CMLY.Production.t) : string =
   let lhs = CMLY.Production.lhs prod |> CMLY.Nonterminal.name in
   let rhs =
     CMLY.Production.rhs prod |> Array.to_list
     |> List.mapi (fun i (sym, _s, _) -> CMLY.Symbol.name sym)
   in
   spr "%s -> %s" lhs (String.concat " " rhs)
+
+let string_of_production (prod : I.production) : string =
+  prod |> I.production_index |> CMLY.Production.of_int |> string_of_cmly_prod
 
 let rec loop ~(lexbuf : Lexing.lexbuf) (checkpoint : _ I.checkpoint) =
   log ~style:[ blue ] "---";
@@ -66,11 +68,19 @@ let rec loop ~(lexbuf : Lexing.lexbuf) (checkpoint : _ I.checkpoint) =
       try
         let token = L.token lexbuf in
         let concrete = Lexing.lexeme lexbuf in
+        (* In order to get the token's name, you need to conver values of type [token] to [I.terminal]. There is the [token2terminal] function inside the table backend, but it's not exposed by the API (yet!).
+
+        This will only be possible when version 20260112 gets released: https://gitlab.inria.fr/fpottier/menhir/blob/master/CHANGES.md?#L49
+
+        Check pending release status: https://github.com/ocaml/opam-repository/pull/29211
+
+        Also relevant: the note in calc-inspection/CalcErrorReporting.ml. *)
         let startp, endp = (lexbuf.lex_start_p, lexbuf.lex_curr_p) in
 
         pr ~style:[ Background Green ] "MATCH";
         log ~style:[ green ] " \"%s\" [%s-%s]" concrete (string_of_pos startp)
           (string_of_pos endp);
+
         I.offer checkpoint (token, startp, endp) |> loop ~lexbuf
       with _ ->
         pr ~style:[ Background Red ] "FAIL";
@@ -119,34 +129,40 @@ module type FoldAttrs = sig
   val attributes : t -> Attribute.t list
 end
 
-(** Collects breakpoints for a specific part of the grammar. *)
-let get_breakpoints (type k) (module K : FoldAttrs with type t = k) =
+module Breakpoint = struct
+  type 'a t = { elem : 'a; pos : Range.t; eq : string option }
+
+  let create elem pos eq = { elem; pos; eq }
+end
+
+(** [get_breakpoints (module K)] collects breakpoints of kind [K] of the
+    grammar. *)
+let get_breakpoints (type k) (module K : FoldAttrs with type t = k) :
+    k Breakpoint.t list =
   K.fold
     (fun t acc ->
       match K.attributes t with
-      | attr :: _ when Attribute.label attr = "break" -> (t, attr) :: acc
+      | attr :: _ when Attribute.label attr = "break" ->
+          Breakpoint.create t (Attribute.position attr)
+            (match Attribute.payload attr with "" -> None | eq -> Some eq)
+          :: acc
       | _ -> acc)
     []
 
 let () =
-  let string_of_attr (t : Attribute.t) =
-    spr "label %s, payload: %s" (Attribute.label t) (Attribute.payload t)
-  in
   let bp_terminals = get_breakpoints (module Terminal) in
   let bp_productions = get_breakpoints (module Production) in
   let bp_rules = get_breakpoints (module Nonterminal) in
+
   log ~style:[ yellow ] "Terminal breakpoints:";
   bp_terminals
-  |> List.iteri (fun i (t, a) ->
-      log "%s %s" (Terminal.name t) (string_of_attr a));
+  |> List.iter (fun b -> log "%s" (Terminal.name b.Breakpoint.elem));
   log ~style:[ yellow ] "Production breakpoints:";
   bp_productions
-  |> List.iteri (fun i (t, a) ->
-      log "%s %s" (Production.lhs t |> Nonterminal.name) (string_of_attr a));
+  |> List.iter (fun b -> log "%s" (string_of_cmly_prod b.Breakpoint.elem));
   log ~style:[ yellow ] "Nonterminal breakpoints:";
-  bp_rules
-  |> List.iteri (fun i (t, a) ->
-      log "%s %s" (Nonterminal.name t) (string_of_attr a));
+  bp_rules |> List.iter (fun b -> log "%s" (Nonterminal.name b.Breakpoint.elem));
+
   let lexbuf = Lexing.from_channel stdin in
   let parser_loop = loop in
   let rec menu_loop () =
