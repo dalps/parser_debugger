@@ -1,4 +1,6 @@
-%token <int> INT
+%[@break "foo"]
+
+%token <int> INT [@break 123]
 %token PLUS [@break] MINUS TIMES DIV
 %token LPAREN RPAREN
 %token EOF
@@ -15,7 +17,7 @@ main:
 | e = expr EOF
     { e }
 
-expr:
+expr [@break rule]:
 | i = INT
     { i }
 | LPAREN e = expr RPAREN
@@ -24,10 +26,10 @@ expr:
     { e1 + e2 }
 | e1 = expr MINUS e2 = expr
     { e1 - e2 }
-| e1 = expr TIMES e2 = expr
+| e1 = expr [@break producer] TIMES e2 = expr
     { e1 * e2 }
 | e1 = expr DIV e2 = expr
-    { e1 / e2 } [@break]
+    { e1 / e2 } [@break production]
 | MINUS e = expr %prec UMINUS
     { - e }
 

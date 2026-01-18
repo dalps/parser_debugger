@@ -108,7 +108,45 @@ let rec loop ~(lexbuf : Lexing.lexbuf) (checkpoint : _ I.checkpoint) =
   | I.Accepted _ -> log ~style:[ green ] "Accepted."
   | I.Rejected -> failwith "Unreachable."
 
+let ( % ) f g x = g (f x)
+
+open CMLY
+
+module type FoldAttrs = sig
+  type t
+
+  val fold : (t -> 'a -> 'a) -> 'a -> 'a
+  val attributes : t -> Attribute.t list
+end
+
+(** Collects breakpoints for a specific part of the grammar. *)
+let get_breakpoints (type k) (module K : FoldAttrs with type t = k) =
+  K.fold
+    (fun t acc ->
+      match K.attributes t with
+      | attr :: _ when Attribute.label attr = "break" -> (t, attr) :: acc
+      | _ -> acc)
+    []
+
 let () =
+  let string_of_attr (t : Attribute.t) =
+    spr "label %s, payload: %s" (Attribute.label t) (Attribute.payload t)
+  in
+  let bp_terminals = get_breakpoints (module Terminal) in
+  let bp_productions = get_breakpoints (module Production) in
+  let bp_rules = get_breakpoints (module Nonterminal) in
+  log ~style:[ yellow ] "Terminal breakpoints:";
+  bp_terminals
+  |> List.iteri (fun i (t, a) ->
+      log "%s %s" (Terminal.name t) (string_of_attr a));
+  log ~style:[ yellow ] "Production breakpoints:";
+  bp_productions
+  |> List.iteri (fun i (t, a) ->
+      log "%s %s" (Production.lhs t |> Nonterminal.name) (string_of_attr a));
+  log ~style:[ yellow ] "Nonterminal breakpoints:";
+  bp_rules
+  |> List.iteri (fun i (t, a) ->
+      log "%s %s" (Nonterminal.name t) (string_of_attr a));
   let lexbuf = Lexing.from_channel stdin in
   let parser_loop = loop in
   let rec menu_loop () =
