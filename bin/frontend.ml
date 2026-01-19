@@ -1,18 +1,9 @@
-module G = Calc
-module L = Calc_lexer
-module I = G.MenhirInterpreter
 module T = ANSITerminal
+module ML = MenhirLib
+module MS = MenhirSdk
 open T
 
-let filename = "_build/default/bin/calc.cmly"
-
-module CMLY = MenhirSdk.Cmly_read.Read (struct
-  let filename = filename
-end)
-
-(* module C = MenhirSdk.Cmly_read.Lift (struct
-  let grammar = MenhirSdk.Cmly_read.read_channel (open_in filename)
-end) *)
+let ( % ) f g x = g (f x)
 
 let log ?(style = []) =
   Printf.ksprintf (fun s -> T.print_string style (s ^ "\n"))
@@ -33,6 +24,33 @@ let show_lexbuf (lexbuf : Lexing.lexbuf) =
     |> String.map (function '\n' -> '\\' | c -> c))
 
 let formatter = Format.formatter_of_out_channel stdout
+
+module Make
+  (* (Basic: ML.EngineTypes.MONOLITHIC_ENGINE) *)
+  (Basic: sig
+    type token
+    exception Error
+    val main : (Lexing.lexbuf -> token) -> Lexing.lexbuf -> int
+  end)
+  (Lexer: sig
+    exception Error of string
+    val token : Lexing.lexbuf -> Basic.token
+  end)
+  (* (Interpreter : ML.EngineTypes.ENGINE with type token = Basic.token) *)
+  (Tables: ML.TableFormat.TABLES with type token = Basic.token)
+  (Interpreter : ML.IncrementalEngine.EVERYTHING with type token = Basic.token)
+  (Incremental : sig
+    val main: Lexing.position -> (int) Interpreter.checkpoint
+  end)
+  (Cmly_path : sig val filename : string end) =
+struct
+module B = Basic
+module L = Lexer
+module I = Interpreter
+module CMLY = MenhirSdk.Cmly_read.Read (Cmly_path)
+
+open CMLY
+
 let string_of_token : CMLY.terminal -> string = CMLY.Terminal.name
 
 let string_of_pos (pos : Lexing.position) =
@@ -68,23 +86,18 @@ let rec loop ~(lexbuf : Lexing.lexbuf) (checkpoint : _ I.checkpoint) =
       try
         let token = L.token lexbuf in
         let concrete = Lexing.lexeme lexbuf in
-        (* In order to get the token's name, you need to conver values of type [token] to [I.terminal]. There is the [token2terminal] function inside the table backend, but it's not exposed by the API (yet!).
-
-        This will only be possible when version 20260112 gets released: https://gitlab.inria.fr/fpottier/menhir/blob/master/CHANGES.md?#L49
-
-        Check pending release status: https://github.com/ocaml/opam-repository/pull/29211
-
-        Also relevant: the note in calc-inspection/CalcErrorReporting.ml. *)
+        let terminal = Tables.token2terminal token |> CMLY.Terminal.of_int |> string_of_token in
         let startp, endp = (lexbuf.lex_start_p, lexbuf.lex_curr_p) in
 
-        pr ~style:[ Background Green ] "MATCH";
-        log ~style:[ green ] " \"%s\" [%s-%s]" concrete (string_of_pos startp)
+        pr ~style:[ green ] "MATCH ";
+        pr ~style:[ Background Green ] "%s" terminal;
+        log ~style:[ green ] ": \"%s\" [%s-%s]" concrete (string_of_pos startp)
           (string_of_pos endp);
 
         I.offer checkpoint (token, startp, endp) |> loop ~lexbuf
       with _ ->
         pr ~style:[ Background Red ] "FAIL";
-        log ~style:[ red ] " illegal token")
+        log ~style:[ red ] " Unrecognized token.")
   | I.Shifting (_prev, _next, _about_to_accept) ->
       log "Shifting";
       let prev_top, next_top = (I.top _prev, I.top _next) in
@@ -118,10 +131,6 @@ let rec loop ~(lexbuf : Lexing.lexbuf) (checkpoint : _ I.checkpoint) =
   | I.Accepted _ -> log ~style:[ green ] "Accepted."
   | I.Rejected -> failwith "Unreachable."
 
-let ( % ) f g x = g (f x)
-
-open CMLY
-
 module type FoldAttrs = sig
   type t
 
@@ -149,7 +158,7 @@ let get_breakpoints (type k) (module K : FoldAttrs with type t = k) :
       | _ -> acc)
     []
 
-let () =
+let run () =
   let bp_terminals = get_breakpoints (module Terminal) in
   let bp_productions = get_breakpoints (module Production) in
   let bp_rules = get_breakpoints (module Nonterminal) in
@@ -168,7 +177,14 @@ let () =
   let rec menu_loop () =
     log ~style:[ blue ] "---";
     log ~style:[ Bold; blue ] "New parse (%s)" CMLY.Grammar.basename;
-    parser_loop ~lexbuf (G.Incremental.main Lexing.dummy_pos);
+    parser_loop ~lexbuf (Incremental.main Lexing.dummy_pos);
     menu_loop ()
   in
   menu_loop ()
+end
+
+module Calc = Make (Calc) (Calc_lexer) (Calc.Tables) (Calc.MenhirInterpreter) (Calc.Incremental) (struct
+  let filename = "_build/default/bin/calc.cmly"
+end)
+
+let _ = Calc.run ()
