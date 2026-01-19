@@ -1,7 +1,7 @@
 (executable
  (name main)
- (public_name menhir-incremental-parser)
- (libraries menhirLib menhirSdk ANSITerminal))
+ (public_name examples)
+ (libraries grammar_debugger))
 
 (menhir
  (modules grammar6 calc)
