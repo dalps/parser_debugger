@@ -1,5 +1,5 @@
 (executable
- (name frontend)
+ (name main)
  (public_name menhir-incremental-parser)
  (libraries menhirLib menhirSdk ANSITerminal))
 

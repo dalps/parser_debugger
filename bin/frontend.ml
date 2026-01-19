@@ -1,53 +1,41 @@
-module T = ANSITerminal
-module ML = MenhirLib
-module MS = MenhirSdk
-open T
+open Utils
+open ANSITerminal
 
-let ( % ) f g x = g (f x)
+module type METADATA = sig
+  (** The type of values produced by the grammar's entry point. *)
+  type semantic_value
 
-let log ?(style = []) =
-  Printf.ksprintf (fun s -> T.print_string style (s ^ "\n"))
+  (** Converts a semantic value to a string for pretty printing. *)
+  val string_of_semval : semantic_value -> string
 
-let pr ?(style = []) = Printf.ksprintf (T.print_string style)
-let spr = Printf.sprintf
-
-let show_lexbuf (lexbuf : Lexing.lexbuf) =
-  let open Lexing in
-  log
-    {|lexbuf stats:
-  length      : %-8d
-  eof reached : %-8b
-  contents    : %-8s
-|}
-    lexbuf.lex_buffer_len lexbuf.lex_eof_reached
-    (Bytes.to_string lexbuf.lex_buffer
-    |> String.map (function '\n' -> '\\' | c -> c))
-
-let formatter = Format.formatter_of_out_channel stdout
+  (** The path to the grammar's .mly file relative to the root of the project. (e.g. ["lib/parser.mly"]) *)
+  val path : string
+end
 
 module Make
-  (* (Basic: ML.EngineTypes.MONOLITHIC_ENGINE) *)
-  (Basic: sig
+  (X: METADATA)
+  (Parser: sig
     type token
-    exception Error
-    val main : (Lexing.lexbuf -> token) -> Lexing.lexbuf -> int
+
+    module Tables : ML.TableFormat.TABLES with type token = token
+    module MenhirInterpreter : ML.IncrementalEngine.EVERYTHING with type token = token
+    module Incremental : sig
+      val main: Lexing.position -> X.semantic_value MenhirInterpreter.checkpoint
+    end
   end)
   (Lexer: sig
-    exception Error of string
-    val token : Lexing.lexbuf -> Basic.token
-  end)
-  (* (Interpreter : ML.EngineTypes.ENGINE with type token = Basic.token) *)
-  (Tables: ML.TableFormat.TABLES with type token = Basic.token)
-  (Interpreter : ML.IncrementalEngine.EVERYTHING with type token = Basic.token)
-  (Incremental : sig
-    val main: Lexing.position -> (int) Interpreter.checkpoint
-  end)
-  (Cmly_path : sig val filename : string end) =
+    val token : Lexing.lexbuf -> Parser.token
+  end) =
 struct
-module B = Basic
+module B = Parser
 module L = Lexer
-module I = Interpreter
-module CMLY = MenhirSdk.Cmly_read.Read (Cmly_path)
+module I = B.MenhirInterpreter
+module Tables = B.Tables
+module CMLY = MenhirSdk.Cmly_read.Read (struct
+let filename =
+    let open Filename in
+    concat "_build/default" (remove_extension X.path ^ ".cmly")
+end)
 
 open CMLY
 
@@ -128,7 +116,9 @@ let rec loop ~(lexbuf : Lexing.lexbuf) (checkpoint : _ I.checkpoint) =
       I.resume checkpoint |> loop ~lexbuf
   | I.HandlingError _ -> log ~style:[ red ] "Syntax error!"
   (* Explain what went wrong please *)
-  | I.Accepted _ -> log ~style:[ green ] "Accepted."
+  | I.Accepted x ->
+    log ~style:[ green ] "Accepted.";
+    log ~style:[ blue ] "Result: %s" (X.string_of_semval x)
   | I.Rejected -> failwith "Unreachable."
 
 module type FoldAttrs = sig
@@ -177,14 +167,8 @@ let run () =
   let rec menu_loop () =
     log ~style:[ blue ] "---";
     log ~style:[ Bold; blue ] "New parse (%s)" CMLY.Grammar.basename;
-    parser_loop ~lexbuf (Incremental.main Lexing.dummy_pos);
+    parser_loop ~lexbuf (B.Incremental.main Lexing.dummy_pos);
     menu_loop ()
   in
   menu_loop ()
 end
-
-module Calc = Make (Calc) (Calc_lexer) (Calc.Tables) (Calc.MenhirInterpreter) (Calc.Incremental) (struct
-  let filename = "_build/default/bin/calc.cmly"
-end)
-
-let _ = Calc.run ()
