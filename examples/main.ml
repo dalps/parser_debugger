@@ -20,4 +20,6 @@ module Grammar6Debugger =
     (Grammar6)
     (Mini_lexer)
 
-let _ = Grammar6Debugger.run ()
+let _ =
+  CalcDebugger.run ~input:"1 + (2 - 42) / 2" ();
+  CalcDebugger.run ();
