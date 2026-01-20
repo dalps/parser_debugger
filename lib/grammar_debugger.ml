@@ -13,12 +13,15 @@ module type METADATA = sig
       (e.g. ["lib/parser.mly"]) *)
 end
 
-(** [Make (X) (Parser) (Lexer)] creates an instance of the debugger for a particular grammar.
-    - [X] describes the type of semantic values produced by the start symbol, how
-      to display them, and where the grammar is located in your dune project.
+(** [Make (X) (Parser) (Lexer)] creates an instance of the debugger for a
+    particular grammar.
+    - [X] describes the type of semantic values produced by the start symbol,
+      how to display them, and where the grammar is located in your dune
+      project.
     - [Parser] is the module produced by Menhir with the [--table] and
       [--inspection] switches set. The entry point must be called [main].
-    - [Lexer] is exactly the lexer module. It must have an entry point called [token]. *)
+    - [Lexer] is exactly the lexer module. It must have an entry point called
+      [token]. *)
 module Make
     (X : METADATA)
     (Parser : sig
@@ -63,6 +66,7 @@ struct
     type 'a t = { elem : 'a; pos : Range.t; eq : string option }
 
     let create elem pos eq = { elem; pos; eq }
+    let elem t = t.elem
   end
 
   type 'a breakpoints = 'a Breakpoint.t list
@@ -212,19 +216,45 @@ struct
     @@
     let open O in
     let+ env = peek_env state.checkpoint in
-    log "The parser is in state %d." (I.current_state_number env);
-    log "The parser will now %s."
+    log "The parser is now in state %d." (I.current_state_number env);
+    log "The LR(0) items of topmost state of the stack are:";
+    show_top env;
+    log "At this state, the parser will now %s."
       (match state.checkpoint with
       | I.InputNeeded _ -> "prompt for input"
       | I.Shifting (_, _, _) -> "shift"
       | I.AboutToReduce (_, _) -> "reduce"
-      | I.HandlingError _ -> "handle "
-      | I.Accepted _ -> "accept"
-      | I.Rejected -> "reject");
-    log "The topmost state of the stack is:";
-    show_top env
+      | I.HandlingError _ -> "handle an error"
+      | I.Accepted _ -> "accept the input"
+      | I.Rejected -> "reject the input")
 
-  (* let read_token (state: state) = *)
+  let read_token
+      ({
+         bp_terminals;
+         bp_productions;
+         bp_rules;
+         lexbuf;
+         manual_input;
+         checkpoint;
+       } :
+        state) =
+    if manual_input then log "Enter tokens (Ctlr+D for EOF):";
+    flush_all ();
+    try
+      let token = L.token lexbuf in
+      let concrete = Lexing.lexeme lexbuf in
+      let terminal = Tables.token2terminal token |> Terminal.of_int in
+      let startp, endp = (lexbuf.lex_start_p, lexbuf.lex_curr_p) in
+
+      pr ~style:[ Background Green ] " MATCH ";
+      pr ~style:[ green; Bold ] " %s" (Terminal.name terminal);
+      log ~style:[ green ] ": \"%s\" [%s-%s]" concrete (string_of_pos startp)
+        (string_of_pos endp);
+      Some (token, startp, endp, terminal)
+    with _ ->
+      pr ~style:[ Background Red ] " ERROR ";
+      log ~style:[ red ] " Unrecognized token.";
+      None
 
   let rec run
       ({
@@ -236,12 +266,42 @@ struct
          checkpoint;
        } as state :
         state) : state =
+    let open O in
     match checkpoint with
-    | I.InputNeeded _
-    | I.Shifting (_, _, _)
-    | I.AboutToReduce (_, _)
-    | I.HandlingError _ | I.Accepted _ | I.Rejected ->
-        state
+    | I.AboutToReduce (_, p) ->
+        let prod = I.production_index p |> Production.of_int in
+        let rule = Production.lhs prod in
+        let prod_bp =
+          List.exists (Breakpoint.elem % Production.equal prod) bp_productions
+        in
+        let rule_bp =
+          List.exists (Breakpoint.elem % Nonterminal.equal rule) bp_rules
+        in
+        let state' = { state with checkpoint = I.resume checkpoint } in
+        if prod_bp then log_info "Paused at production breakpoint.";
+        if rule_bp then log_info "Paused at rule breakpoint.";
+        if prod_bp || rule_bp then state' else run state'
+    | I.InputNeeded _ -> (
+        match read_token state with
+        | None -> state
+        | Some (token, startp, endp, terminal) ->
+            let state' =
+              {
+                state with
+                checkpoint = I.offer checkpoint (token, startp, endp);
+              }
+            in
+            if
+              List.exists
+                (Breakpoint.elem % Terminal.equal terminal)
+                bp_terminals
+            then (
+              log_info "Paused at %s breakpoint." (Terminal.name terminal);
+              state')
+            else run state')
+    | I.Shifting (_, _, _) ->
+        run { state with checkpoint = I.resume checkpoint }
+    | I.HandlingError _ | I.Accepted _ | I.Rejected -> state
 
   let step
       ({
@@ -255,27 +315,12 @@ struct
         state) : state =
     match checkpoint with
     | I.InputNeeded env -> (
-        if manual_input then log "Enter tokens (Ctlr+D for EOF):";
-        flush_all ();
-        try
-          let token = L.token lexbuf in
-          let concrete = Lexing.lexeme lexbuf in
-          let terminal =
-            Tables.token2terminal token
-            |> CMLY.Terminal.of_int |> string_of_token
-          in
-          let startp, endp = (lexbuf.lex_start_p, lexbuf.lex_curr_p) in
-
-          pr ~style:[ green ] "MATCH ";
-          pr ~style:[ Background Green ] "%s" terminal;
-          log ~style:[ green ] ": \"%s\" [%s-%s]" concrete
-            (string_of_pos startp) (string_of_pos endp);
-
-          { state with checkpoint = I.offer checkpoint (token, startp, endp) }
-        with _ ->
-          pr ~style:[ Background Red ] "FAIL";
-          log ~style:[ red ] " Unrecognized token.";
-          state)
+        log "The parser is consuming input from the buffer.";
+        match read_token state with
+        | None -> state
+        | Some (token, startp, endp, _) ->
+            { state with checkpoint = I.offer checkpoint (token, startp, endp) }
+        )
     | I.Shifting (_, env, _about_to_accept) ->
         log "The parser has shifted a token.";
         show_top env;
@@ -319,9 +364,9 @@ struct
         loop state
     | Step -> step state |> loop
     | Run ->
-        let s' = run state in
-        dump_info state;
-        loop s'
+        let state' = run state in
+        dump_info state';
+        loop state'
     | _ -> ()
 
   let run ?(input : [> `File of string | `Text of string ] option) () =
