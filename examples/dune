@@ -4,7 +4,7 @@
  (libraries grammar_debugger))
 
 (menhir
- (modules grammar6 calc)
+ (modules tiny calc json)
  (flags --table --inspection --cmly))
 
-(ocamllex mini_lexer calc_lexer)
+(ocamllex tiny_lexer calc_lexer json_lexer)

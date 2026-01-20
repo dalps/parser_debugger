@@ -3,6 +3,13 @@ module ML = MenhirLib
 module MS = MenhirSdk
 open T
 
+module O = struct
+  include Option
+
+  let ( let+ ) o f = Option.map f o
+  let ( let* ) = Option.bind
+end
+
 let ( % ) f g x = g (f x)
 
 let log ?(style = []) =

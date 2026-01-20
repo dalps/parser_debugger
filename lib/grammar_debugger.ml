@@ -13,11 +13,13 @@ module type METADATA = sig
       (e.g. ["lib/parser.mly"]) *)
 end
 
-(** [Make (Meta) (Parser) (Lexer)] makes an instance of the debugger with given metadata, [Parser] and [Lexer].
-- [Meta] specifies the type of semantic values produced by the parser, how to display them, and where the grammar is located in the dune project.
-- [Parser] is the module produced by Menhir with the [--table] and [--inspection] switches.
-- [Lexer] is exactly the lexer module.
-*)
+(** [Make (Meta) (Parser) (Lexer)] makes an instance of the debugger with given
+    metadata, [Parser] and [Lexer].
+    - [Meta] specifies the type of semantic values produced by the parser, how
+      to display them, and where the grammar is located in the dune project.
+    - [Parser] is the module produced by Menhir with the [--table] and
+      [--inspection] switches.
+    - [Lexer] is exactly the lexer module. *)
 module Make
     (X : METADATA)
     (Parser : sig
@@ -122,11 +124,10 @@ struct
       | RunFail
       | Quit
       | List
+      | DumpLexer
       | BP_list
       | BP_rm of string
       | BP_add of string
-
-    let tab = "    "
 
     let list_breakpoints (state : state) =
       log ~style:[ yellow ] "Token breakpoints:";
@@ -153,6 +154,8 @@ struct
     bp list        list all active breakpoints
     bp rm <name>   remove breakpoint on <name>
     bp rm          removes all breakpoints
+    s              inspect parser stack
+    l              inspect lexer buffer
     q              quit
 |}
 
@@ -165,7 +168,8 @@ struct
       | "bp add" -> BP_add ""
       | "bp rm" -> BP_rm ""
       | "bp list" -> BP_list
-      | "q" | "quit" -> exit 0
+      | "l" -> DumpLexer
+      | "q" | "quit" -> Quit
       | _ ->
           help ();
           prompt_command ()
@@ -176,11 +180,34 @@ struct
       read_line ()
   end
 
-  let rec loop (state : state) (checkpoint : _ I.checkpoint) =
+  let unwrap_elem (elem : I.element option) =
+    match elem with
+    | None -> ()
+    | Some (I.Element (state, _, startp, endp)) ->
+        I.items state
+        |> List.iter (fun (prod, j) ->
+            let lhs, rhs = string_of_item prod j in
+            log "%s -> %s" lhs (String.concat " " rhs))
+
+  let peek_env (c : X.semantic_value I.checkpoint) :
+      X.semantic_value I.env option =
+    match c with
+    | I.InputNeeded e
+    | I.Shifting (e, _, _)
+    | I.AboutToReduce (e, _)
+    | I.HandlingError e ->
+        Some e
+    | I.Accepted _ -> None
+    | I.Rejected -> None
+
+  let rec loop (state : state) (checkpoint : X.semantic_value I.checkpoint) =
     let open Commands in
     let { lexbuf } = state in
     let rec repl () =
       match prompt_command () with
+      | Commands.DumpLexer ->
+          show_lexbuf state.lexbuf;
+          repl ()
       | Commands.Quit ->
           log "Goodbye.";
           exit 0
@@ -193,7 +220,7 @@ struct
     match checkpoint with
     | I.InputNeeded env -> (
         log "Current state: %d" (I.current_state_number env);
-        if state.manual_input then log "Enter tokens (Ctlr+D to end session):";
+        if state.manual_input then log "Enter tokens (Ctlr+D for EOF):";
         flush_all ();
         try
           let token = L.token lexbuf in
@@ -214,21 +241,11 @@ struct
           pr ~style:[ Background Red ] "FAIL";
           log ~style:[ red ] " Unrecognized token.")
     | I.Shifting (_prev, _next, _about_to_accept) ->
-        log "Shifting";
-        let prev_top, next_top = (I.top _prev, I.top _next) in
-        let unwrap_elem (elem : I.element option) =
-          match elem with
-          | None -> ()
-          | Some (I.Element (state, _, startp, endp)) ->
-              I.items state
-              |> List.iter (fun (prod, j) ->
-                  let lhs, rhs = string_of_item prod j in
-                  log "%s -> %s" lhs (String.concat " " rhs))
-        in
-        log "* Previous env:";
-        unwrap_elem prev_top;
-        log "* Current env:";
-        unwrap_elem next_top;
+        log "The parser is shifting";
+        log "* Top before shifting:";
+        unwrap_elem (I.top _prev);
+        log "* Top after shifting:";
+        unwrap_elem (I.top _next);
         (* TODO: print out the possible follower tokens *)
         I.resume checkpoint |> loop state
     | I.AboutToReduce (_env, prod) ->
@@ -236,10 +253,21 @@ struct
           prod |> I.production_index |> CMLY.Production.of_int
           |> CMLY.Production.lhs |> CMLY.Nonterminal.name
         in
-        pr "Reducing rule ";
+        pr "The parser reduced the following production of rule ";
         log ~style:[ Bold ] "%s" prod_name;
         log "%s" (string_of_production prod);
-        I.resume checkpoint |> loop state
+        log "* Top before reducing:";
+        (let open O in
+         let+ _env = peek_env checkpoint in
+         unwrap_elem (I.top _env))
+        |> ignore;
+        let c = I.resume checkpoint in
+        log "* Top after reducing:";
+        (let open O in
+         let+ _env = peek_env c in
+         unwrap_elem (I.top _env))
+        |> ignore;
+        loop state c
     | I.HandlingError _ -> log ~style:[ red ] "Syntax error!"
     (* Explain what went wrong please *)
     | I.Accepted x ->
@@ -247,14 +275,19 @@ struct
         log ~style:[ green ] "Result: %s" (X.string_of_semval x)
     | I.Rejected -> failwith "unreachable"
 
-  let run ?(input = "") () =
+  let run ?(input : [> `File of string | `Text of string ] option) () =
     let bp_terminals = get_breakpoints (module Terminal) in
     let bp_productions = get_breakpoints (module Production) in
     let bp_rules = get_breakpoints (module Nonterminal) in
     let lexbuf, manual_input =
       match input with
-      | "" -> (Lexing.from_channel stdin, true)
-      | s -> (Lexing.from_string s, false)
+      | None -> (Lexing.from_channel stdin, true)
+      | Some (`File f) ->
+          let ch = open_in f in
+          let lexbuf = Lexing.from_string (In_channel.input_all ch) in
+          close_in ch;
+          (lexbuf, false)
+      | Some (`Text s) -> (Lexing.from_string s, false)
     in
     let s0 : state =
       { bp_terminals; bp_productions; bp_rules; lexbuf; manual_input }

@@ -9,17 +9,30 @@ module CalcDebugger =
     (Calc)
     (Calc_lexer)
 
-module Grammar6Debugger =
+module TinyDebugger =
   Grammar_debugger.Make
     (struct
       type semantic_value = unit
 
       let string_of_semval () = "()"
-      let path = "examples/grammar6.mly"
+      let path = "examples/tiny.mly"
     end)
-    (Grammar6)
-    (Mini_lexer)
+    (Tiny)
+    (Tiny_lexer)
+
+module JsonDebugger =
+  Grammar_debugger.Make
+    (struct
+      type semantic_value = Ast.value
+
+      let string_of_semval = Ast.to_string
+      let path = "examples/json.mly"
+    end)
+    (Json)
+    (Json_lexer)
 
 let _ =
-  CalcDebugger.run ~input:"1 + (2 - 42) / 2" ();
-  CalcDebugger.run ();
+  JsonDebugger.run ~input:(`File "examples/test.json") ();
+  CalcDebugger.run ~input:(`Text "1 + (42-2) / 2 * (7-0) + (4 - 2 - 1)") ();
+  (* This last line will prompt you for tokens. *)
+  TinyDebugger.run ()
