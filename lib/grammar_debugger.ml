@@ -13,13 +13,12 @@ module type METADATA = sig
       (e.g. ["lib/parser.mly"]) *)
 end
 
-(** [Make (Meta) (Parser) (Lexer)] makes an instance of the debugger with given
-    metadata, [Parser] and [Lexer].
-    - [Meta] specifies the type of semantic values produced by the parser, how
-      to display them, and where the grammar is located in the dune project.
+(** [Make (X) (Parser) (Lexer)] creates an instance of the debugger for a particular grammar.
+    - [X] describes the type of semantic values produced by the start symbol, how
+      to display them, and where the grammar is located in your dune project.
     - [Parser] is the module produced by Menhir with the [--table] and
-      [--inspection] switches.
-    - [Lexer] is exactly the lexer module. *)
+      [--inspection] switches set. The entry point must be called [main].
+    - [Lexer] is exactly the lexer module. It must have an entry point called [token]. *)
 module Make
     (X : METADATA)
     (Parser : sig
@@ -50,6 +49,7 @@ struct
       concat "_build/default" (remove_extension X.path ^ ".cmly")
   end)
 
+  open X
   open CMLY
 
   module type FoldAttrs = sig
@@ -73,6 +73,7 @@ struct
     bp_rules : CMLY.nonterminal breakpoints;
     lexbuf : Lexing.lexbuf;
     manual_input : bool;
+    checkpoint : semantic_value I.checkpoint;
   }
 
   (** [get_breakpoints (module K)] collects breakpoints of kind [K] of the
@@ -125,6 +126,7 @@ struct
       | Quit
       | List
       | DumpLexer
+      | Peek
       | BP_list
       | BP_rm of string
       | BP_add of string
@@ -154,7 +156,7 @@ struct
     bp list        list all active breakpoints
     bp rm <name>   remove breakpoint on <name>
     bp rm          removes all breakpoints
-    s              inspect parser stack
+    p              inspect parser stack
     l              inspect lexer buffer
     q              quit
 |}
@@ -169,6 +171,7 @@ struct
       | "bp rm" -> BP_rm ""
       | "bp list" -> BP_list
       | "l" -> DumpLexer
+      | "p" -> Peek
       | "q" | "quit" -> Quit
       | _ ->
           help ();
@@ -189,38 +192,70 @@ struct
             let lhs, rhs = string_of_item prod j in
             log "%s -> %s" lhs (String.concat " " rhs))
 
+  let show_top (env : X.semantic_value I.env) = unwrap_elem (I.top env)
+
   let peek_env (c : X.semantic_value I.checkpoint) :
       X.semantic_value I.env option =
     match c with
     | I.InputNeeded e
-    | I.Shifting (e, _, _)
-    | I.AboutToReduce (e, _)
+    | I.Shifting (e, _, _) (* e is the env before shifting *)
+    | I.AboutToReduce (e, _) (* e is the env before reducing *)
     | I.HandlingError e ->
         Some e
     | I.Accepted _ -> None
     | I.Rejected -> None
 
-  let rec loop (state : state) (checkpoint : X.semantic_value I.checkpoint) =
-    let open Commands in
-    let { lexbuf } = state in
-    let rec repl () =
-      match prompt_command () with
-      | Commands.DumpLexer ->
-          show_lexbuf state.lexbuf;
-          repl ()
-      | Commands.Quit ->
-          log "Goodbye.";
-          exit 0
-      | Commands.BP_list ->
-          list_breakpoints state;
-          repl ()
-      | _ -> ()
-    in
-    repl ();
+  (** Presents info about the parser's state after hitting a breakpoint or by
+      request of the user. *)
+  let dump_info (state : state) =
+    ignore
+    @@
+    let open O in
+    let+ env = peek_env state.checkpoint in
+    log "The parser is in state %d." (I.current_state_number env);
+    log "The parser will now %s."
+      (match state.checkpoint with
+      | I.InputNeeded _ -> "prompt for input"
+      | I.Shifting (_, _, _) -> "shift"
+      | I.AboutToReduce (_, _) -> "reduce"
+      | I.HandlingError _ -> "handle "
+      | I.Accepted _ -> "accept"
+      | I.Rejected -> "reject");
+    log "The topmost state of the stack is:";
+    show_top env
+
+  (* let read_token (state: state) = *)
+
+  let rec run
+      ({
+         bp_terminals;
+         bp_productions;
+         bp_rules;
+         lexbuf;
+         manual_input;
+         checkpoint;
+       } as state :
+        state) : state =
+    match checkpoint with
+    | I.InputNeeded _
+    | I.Shifting (_, _, _)
+    | I.AboutToReduce (_, _)
+    | I.HandlingError _ | I.Accepted _ | I.Rejected ->
+        state
+
+  let step
+      ({
+         bp_terminals;
+         bp_productions;
+         bp_rules;
+         lexbuf;
+         manual_input;
+         checkpoint;
+       } as state :
+        state) : state =
     match checkpoint with
     | I.InputNeeded env -> (
-        log "Current state: %d" (I.current_state_number env);
-        if state.manual_input then log "Enter tokens (Ctlr+D for EOF):";
+        if manual_input then log "Enter tokens (Ctlr+D for EOF):";
         flush_all ();
         try
           let token = L.token lexbuf in
@@ -236,44 +271,58 @@ struct
           log ~style:[ green ] ": \"%s\" [%s-%s]" concrete
             (string_of_pos startp) (string_of_pos endp);
 
-          I.offer checkpoint (token, startp, endp) |> loop state
+          { state with checkpoint = I.offer checkpoint (token, startp, endp) }
         with _ ->
           pr ~style:[ Background Red ] "FAIL";
-          log ~style:[ red ] " Unrecognized token.")
-    | I.Shifting (_prev, _next, _about_to_accept) ->
-        log "The parser is shifting";
-        log "* Top before shifting:";
-        unwrap_elem (I.top _prev);
-        log "* Top after shifting:";
-        unwrap_elem (I.top _next);
-        (* TODO: print out the possible follower tokens *)
-        I.resume checkpoint |> loop state
+          log ~style:[ red ] " Unrecognized token.";
+          state)
+    | I.Shifting (_, env, _about_to_accept) ->
+        log "The parser has shifted a token.";
+        show_top env;
+        { state with checkpoint = I.resume checkpoint }
     | I.AboutToReduce (_env, prod) ->
         let prod_name =
           prod |> I.production_index |> CMLY.Production.of_int
           |> CMLY.Production.lhs |> CMLY.Nonterminal.name
         in
-        pr "The parser reduced the following production of rule ";
+        pr "The parser has reduced the following production of rule ";
         log ~style:[ Bold ] "%s" prod_name;
         log "%s" (string_of_production prod);
-        log "* Top before reducing:";
-        (let open O in
-         let+ _env = peek_env checkpoint in
-         unwrap_elem (I.top _env))
-        |> ignore;
-        let c = I.resume checkpoint in
-        log "* Top after reducing:";
-        (let open O in
-         let+ _env = peek_env c in
-         unwrap_elem (I.top _env))
-        |> ignore;
-        loop state c
-    | I.HandlingError _ -> log ~style:[ red ] "Syntax error!"
+        { state with checkpoint = I.resume checkpoint }
+    | I.HandlingError env ->
+        log ~style:[ red ] "Syntax error!";
+        show_top env;
+        state
     (* Explain what went wrong please *)
     | I.Accepted x ->
         log ~style:[ green ] "Accepted.";
-        log ~style:[ green ] "Result: %s" (X.string_of_semval x)
+        log ~style:[ green ] "Result: %s" (X.string_of_semval x);
+        state
     | I.Rejected -> failwith "unreachable"
+
+  let rec loop
+      ({ bp_terminals; bp_productions; bp_rules; lexbuf; manual_input } as state :
+        state) : unit =
+    let open Commands in
+    match prompt_command () with
+    | DumpLexer ->
+        show_lexbuf state.lexbuf;
+        loop state
+    | Quit ->
+        log "Goodbye.";
+        exit 0
+    | BP_list ->
+        list_breakpoints state;
+        loop state
+    | Peek ->
+        dump_info state;
+        loop state
+    | Step -> step state |> loop
+    | Run ->
+        let s' = run state in
+        dump_info state;
+        loop s'
+    | _ -> ()
 
   let run ?(input : [> `File of string | `Text of string ] option) () =
     let bp_terminals = get_breakpoints (module Terminal) in
@@ -289,12 +338,20 @@ struct
           (lexbuf, false)
       | Some (`Text s) -> (Lexing.from_string s, false)
     in
+    let chk0 = B.Incremental.main Lexing.dummy_pos in
     let s0 : state =
-      { bp_terminals; bp_productions; bp_rules; lexbuf; manual_input }
+      {
+        bp_terminals;
+        bp_productions;
+        bp_rules;
+        lexbuf;
+        manual_input;
+        checkpoint = chk0;
+      }
     in
     pr ~style:[ blue ] "debug_grammar(";
     pr ~style:[ Bold ] "%s" X.path;
     log ~style:[ blue ] ")\n";
     log ~style:[] "Type '?' or 'help' for a list of commands.";
-    loop s0 (B.Incremental.main Lexing.dummy_pos)
+    loop s0
 end
