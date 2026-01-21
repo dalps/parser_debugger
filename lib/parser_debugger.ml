@@ -8,7 +8,7 @@ module type METADATA = sig
   val string_of_semval : semantic_value -> string
   (** Converts a semantic value to a string for pretty printing. *)
 
-  val path : string
+  val mly_path : string
   (** The path to the grammar's .mly file relative to the root of the project.
       (e.g. ["lib/parser.mly"]) *)
 end
@@ -46,13 +46,14 @@ struct
   module I = B.MenhirInterpreter
   module Tables = B.Tables
 
+  open X
+
   module CMLY = MenhirSdk.Cmly_read.Read (struct
     let filename =
       let open Filename in
-      concat "_build/default" (remove_extension X.path ^ ".cmly")
+      concat "_build/default" (remove_extension mly_path ^ ".cmly")
   end)
 
-  open X
   open CMLY
 
   module type FoldAttrs = sig
@@ -395,7 +396,7 @@ struct
       }
     in
     pr ~style:[ blue ] "debug_grammar(";
-    pr ~style:[ Bold ] "%s" X.path;
+    pr ~style:[ Bold ] "%s" mly_path;
     log ~style:[ blue ] ")\n";
     log ~style:[] "Type '?' or 'help' for a list of commands.";
     loop s0

@@ -2,7 +2,7 @@
 
 (using menhir 3.0)
 
-(name grammar_debugger)
+(name parser_debugger)
 
 (generate_opam_files true)
 
@@ -18,7 +18,7 @@
 (documentation https://url/to/documentation)
 
 (package
- (name grammar_debugger)
+ (name parser_debugger)
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends ocaml)

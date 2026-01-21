@@ -1,12 +1,22 @@
-# Grammar Debugger
+# `Parser_debugger`
 
-`Grammar_debugger` is an interactive debugger for Menhir parsers, with a REPL interface that lets you set *breakpoints* in your grammar and step through the shift / reduce transitions of the generated LR(1) automaton on a given input.
+is an interactive debugger for OCaml parsers produced by [Menhir](https://fpottier.gitlabpages.inria.fr/menhir/). It has a nice REPL that lets you step through the shift / reduce transitions the LR(1) automaton takes on while reading an input.
 
-Heavily inspired by Raku's [Grammar::Debugger](https://raku.land/zef:raku-community-modules/Grammar::Debugger).
+Heavily inspired by the Raku package [Grammar::Debugger](https://raku.land/zef:raku-community-modules/Grammar::Debugger).
 
 ## Demo
 
-Your parser needs to be built with the `--table`, `--inspection`, `--cmly` flags. Add these to the `dune` file where your parser is declared:
+Given the following library structure for a parser module called `Tiny_parser`:
+
+```
+lib/
+├── dune
+├── main.ml
+├── tiny_parser.mly
+└── tiny_lexer.mll
+```
+
+Your parser must be built with the `--table`, `--inspection`, `--cmly` options. Add these flags in the `dune` file, inside the Menhir stanza:
 
 ```
 (menhir
@@ -16,16 +26,17 @@ Your parser needs to be built with the `--table`, `--inspection`, `--cmly` flags
 (ocamllex tiny_lexer)
 ```
 
-Then getting a debugger for your parser is as simple as calling the functor `Grammar_debugger.Make`:
+Then getting a debugger for your parser is as simple as calling the functor `Parser_debugger.Make` with three things:
 
 ```ocaml
+(* main.ml *)
 module TinyDebugger =
-  Grammar_debugger.Make
+  Parser_debugger.Make
     (struct
       type semantic_value = unit
 
       let string_of_semval () = "()"
-      let path = "lib/tiny_parser.mly"
+      let mly_path = "lib/tiny_parser.mly"
     end)
     (Tiny_parser)
     (Tiny_lexer)
@@ -33,25 +44,23 @@ module TinyDebugger =
 let _ = TinyDebugger.run ()
 ```
 
-We provided:
-1. A module containing some [metadata](lib/grammar_debugger.ml#4)
-2. The parser module
-3. The lexer module
+1. A [brief header module](lib/parser_debugger.ml#4) containing some **metadata** about (1) the type of values the parser produces and (2) their pretty printing, (3) its location relative to the project root;
+1. The **parser** module;
+1. The **lexer** module;
 
-Also check out the other [examples](/examples/).
+That's it!
 
-> [!IMPORTANT]
-> **tl;dr** The debugger is based on an unreleased version of Menhir, which additionally needs to be patched.
+Check out the other [examples](/examples/).
 
 ## Breakpoints
 
-You can decorate your grammar with breakpoints (or set them directly in the command line) for the following places:
+You can decorate your grammar with breakpoints (or set them directly in the REPL) for the following places:
 
 ### On a token
 
-after the token's name, or the alias if present:
+after the token's name, or after the alias if present:
 
-```
+```ocaml.menhir
 %token <int> INT [@break]
 ```
 
@@ -60,7 +69,7 @@ The debugger will pause when it consumes or is about to shift token `INT`.
 ### On a rule
 immediately after its name:
 
-```
+```ocaml.menhir
 expr [@break rule]:
 | ...
 ```
@@ -72,7 +81,7 @@ The debugger will pause when `expr` is about to get reduced (through any of its 
 
 after the semantic action:
 
-```
+```ocaml.menhir
 expr:
 | ...
 | e1 = expr DIV e2 = expr { e1 / e2 } [@break]
@@ -83,7 +92,10 @@ The debugger will pause when `expr -> expr DIV expr` is about to get reduced.
 
 ## Installation
 
-The debugger is based on version `20260112` Menhir (**not released yet!**). Despite the great API additions it comes with that make the debugger possible, I found it needed to be **patched** to insert a type constraint in the generated parser interfaces that should be there but really isn't.
+> [!IMPORTANT]
+> **tl;dr** The debugger is based on an unreleased version of Menhir, which additionally needs to be patched.
+
+The debugger is based on version `20260112` Menhir which introduces all the great API changes that make the debugger possible. Alas, it had to **patch** it to insert a type constraint in the generated parser interfaces that should be there but really isn't.
 
 So, if you can't wait to try the debugger and are up for a bit of hacking, follow along.
 
@@ -112,9 +124,9 @@ let tables () =
   ]
 ```
 
-In short, this lets the debugger make use of the `token2terminal` function of the `Tables` backend of the [Inspection API](https://cambium.inria.fr/~fpottier/menhir/manual.html#sec64).
+The type constraint identifies the `token` type of the Monolithic API with the type `Tables.token` type of the [Inspection API](https://cambium.inria.fr/~fpottier/menhir/manual.html#sec64). That's it. This lets the debugger use the `Tables.token2terminal` function provided by the latter API to do an essential conversion.
 
-Now install the patched Menhir. This might fail due to many packages depending on Menhir and on your switch, so work out any opam problems:
+Time to install the patched Menhir. This might fail due to other packages depending on an older version of Menhir on your opam switch, so work opam problems out:
 ```sh
 dune build @install
 ```
@@ -128,7 +140,7 @@ module Tables : MenhirLib.TableFormat.TABLES
 (* hack hack hack *)
 ```
 
-The typechecker should now be happy when you apply `Grammar_debugger.Make`!
+The typechecker should now be happy when you apply `Parser_debugger.Make`!
 
 ## LICENSE
 

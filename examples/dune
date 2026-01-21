@@ -1,7 +1,7 @@
 (executable
  (name main)
  (public_name examples)
- (libraries grammar_debugger))
+ (libraries parser_debugger))
 
 (menhir
  (modules tiny calc json)

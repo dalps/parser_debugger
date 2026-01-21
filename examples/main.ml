@@ -1,32 +1,32 @@
 module CalcDebugger =
-  Grammar_debugger.Make
+  Parser_debugger.Make
     (struct
       type semantic_value = int
 
       let string_of_semval = string_of_int
-      let path = "examples/calc.mly"
+      let mly_path = "examples/calc.mly"
     end)
     (Calc)
     (Calc_lexer)
 
 module TinyDebugger =
-  Grammar_debugger.Make
+  Parser_debugger.Make
     (struct
       type semantic_value = unit
 
       let string_of_semval () = "()"
-      let path = "examples/tiny.mly"
+      let mly_path = "examples/tiny.mly"
     end)
     (Tiny)
     (Tiny_lexer)
 
 module JsonDebugger =
-  Grammar_debugger.Make
+  Parser_debugger.Make
     (struct
       type semantic_value = Ast.value
 
       let string_of_semval = Ast.to_string
-      let path = "examples/json.mly"
+      let mly_path = "examples/json.mly"
     end)
     (Json)
     (Json_lexer)
