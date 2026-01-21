@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (public_name json)
+ (libraries parser_debugger))
+
+(menhir
+ (modules json)
+ (flags --table --inspection --cmly))
+
+(ocamllex json_lexer)

@@ -14,9 +14,9 @@ module type METADATA = sig
 end
 
 (** [Make (X) (Parser) (Lexer)] creates an instance of the debugger for a
-    particular grammar.
+    particular parser.
     - [X] describes the type of semantic values produced by the start symbol,
-      how to display them, and where the grammar is located in your dune
+      how to display them, and where the parser is located in your dune
       project.
     - [Parser] is the module produced by Menhir with the [--table] and
       [--inspection] switches set. The entry point must be called [main].

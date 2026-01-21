@@ -1,10 +1,10 @@
 (executable
  (name main)
- (public_name examples)
+ (public_name tiny)
  (libraries parser_debugger))
 
 (menhir
- (modules tiny calc json)
+ (modules tiny_parser)
  (flags --table --inspection --cmly))
 
-(ocamllex tiny_lexer calc_lexer json_lexer)
+(ocamllex tiny_lexer)

@@ -40,17 +40,19 @@ module TinyDebugger =
     end)
     (Tiny_parser)
     (Tiny_lexer)
-
-let _ = TinyDebugger.run ()
 ```
 
-1. A [brief header module](lib/parser_debugger.ml#4) containing some **metadata** about (1) the type of values the parser produces and (2) their pretty printing, (3) its location relative to the project root;
+1. A [brief header module](lib/parser_debugger.ml#4) containing some **metadata** about (i) the type of values the parser produces and (ii) their pretty printing, (iii) its location relative to the project root;
 1. The **parser** module;
 1. The **lexer** module;
 
-That's it!
+That's it! Just call your debugger's `run` method in your main function and have fun:
 
-Check out the other [examples](/examples/).
+```ocaml
+let _ = TinyDebugger.run ()
+```
+
+Check out the other [demos](/demos/).
 
 ## Breakpoints
 

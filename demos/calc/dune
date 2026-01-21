@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (public_name calc)
+ (libraries parser_debugger))
+
+(menhir
+ (modules calc)
+ (flags --table --inspection --cmly))
+
+(ocamllex calc_lexer)
