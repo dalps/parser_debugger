@@ -56,32 +56,34 @@ Check out the other [demos](/demos/).
 
 ## Breakpoints
 
-You can decorate your grammar with breakpoints (or set them directly in the REPL) for the following places:
+You can decorate your grammar with **breakpoint attributes** (or set them directly in the REPL) for the following places:
 
-### On a token
+### Tokens
 
-after the token's name, or after the alias if present:
+Place the `[@break]` attribute after the token's name, or after the alias if present:
 
 ```ocaml.menhir
 %token <int> INT [@break]
 ```
 
-The debugger will pause when it consumes or is about to shift token `INT`.
+The debugger will halt when it consumes or is about to shift token `INT`.
 
-### On a rule
-immediately after its name:
+You may also provide a string payload, as in `[@break 123]`, and the debugger will halt on `INT` only when it matches exactly the string `'123'`.
+
+### Rules
+
+Place `[@break]` immediately after the rule's name:
 
 ```ocaml.menhir
 expr [@break rule]:
 | ...
 ```
 
-The debugger will pause when `expr` is about to get reduced (through any of its productions).
+The debugger will halt when `expr` is about to get reduced (through any of its productions).
 
+### Productions
 
-### On a production
-
-after the semantic action:
+Place `[@break]` after the production's semantic action:
 
 ```ocaml.menhir
 expr:
@@ -90,14 +92,14 @@ expr:
 | ...
 ```
 
-The debugger will pause when `expr -> expr DIV expr` is about to get reduced.
+The debugger will halt when `expr -> expr DIV expr` is about to get reduced.
 
 ## Installation
 
 > [!IMPORTANT]
 > **tl;dr** The debugger is based on an unreleased version of Menhir, which additionally needs to be patched.
 
-The debugger is based on version `20260112` Menhir which introduces all the great API changes that make the debugger possible. Alas, it had to **patch** it to insert a type constraint in the generated parser interfaces that should be there but really isn't.
+The debugger is based on version `20260112` of Menhir which introduces all the great API changes that make the debugging possible. Alas, I had to **patch** it to insert a type constraint in the generated parser interfaces that should be there but really isn't.
 
 So, if you can't wait to try the debugger and are up for a bit of hacking, follow along.
 
@@ -126,7 +128,7 @@ let tables () =
   ]
 ```
 
-The type constraint identifies the `token` type of the Monolithic API with the type `Tables.token` type of the [Inspection API](https://cambium.inria.fr/~fpottier/menhir/manual.html#sec64). That's it. This lets the debugger use the `Tables.token2terminal` function provided by the latter API to do an essential conversion.
+The type constraint identifies the `token` type of the Monolithic API with the type `Tables.token` type of the table back-end. This lets the debugger use the `Tables.token2terminal` function provided by the latter API to do an essential conversion.
 
 Time to install the patched Menhir. This might fail due to other packages depending on an older version of Menhir on your opam switch, so work opam problems out:
 ```sh
